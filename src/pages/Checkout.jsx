@@ -3,35 +3,49 @@ import { Link, Navigate } from 'react-router-dom'
 import Seo from '../components/Seo.jsx'
 import Button from '../components/Button.jsx'
 import { useCart } from '../context/CartContext.jsx'
-import products from '../data/products.js'
 
 export default function Checkout() {
   const { items, subtotal } = useCart()
   const [status, setStatus] = useState('idle')
   const [errorMessage, setErrorMessage] = useState('')
 
-  function handleSquareCheckout(e) {
-    e.preventDefault()
-    setStatus('loading')
-    setErrorMessage('')
+async function handleSquareCheckout(e) {
+  e.preventDefault()
+  setStatus('loading')
+  setErrorMessage('')
 
-    // Grab the first cart item to route to its Square link
-    const primaryItem = items[0]
-    const matchedProduct = products.find(
-      (p) => p.id === primaryItem?.productId || p.title === primaryItem?.title
-    )
+  try {
+    const response = await fetch('/api/create-square-checkout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        items: items.map((item) => ({
+          productId: item.productId,
+          title: item.title,
+          quantity: item.quantity,
+          size: item.size?.label || 'Original Artwork',
+          unitPrice: item.size?.price || item.price || 0,
+        })),
+      }),
+    })
 
-    const checkoutUrl = primaryItem?.checkoutUrl || matchedProduct?.checkoutUrl
+    const data = await response.json()
 
-    if (checkoutUrl) {
-      window.location.href = checkoutUrl
-    } else {
-      setStatus('error')
-      setErrorMessage(
-        'A checkout link could not be found for this item. Please ensure checkoutUrl is configured in products.js.'
-      )
+    if (!response.ok) {
+      throw new Error(data.error || 'Could not create checkout.')
     }
+
+    window.location.href = data.url
+  } catch (error) {
+    console.error('Square checkout error:', error)
+    setStatus('error')
+    setErrorMessage(
+      error.message || 'Something went wrong. Please try again.'
+    )
   }
+}
 
   if (items.length === 0) {
     return <Navigate to="/cart" replace />

@@ -46,3 +46,14 @@
     @apply mx-auto w-full max-w-[1400px] px-6 sm:px-8 lg:px-12;
   }
 }
+
+@layer utilities {
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+}

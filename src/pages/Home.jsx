@@ -5,7 +5,6 @@ import Button from '../components/Button.jsx'
 import Section from '../components/Section.jsx'
 import ProductGrid from '../components/ProductGrid.jsx'
 import Newsletter from '../components/Newsletter.jsx'
-import PlaceholderArt from '../components/PlaceholderArt.jsx'
 import { PRODUCTS } from '../data/products.js'
 
 const hero = PRODUCTS.find((p) => p.slug === 'sedona-sunset')
@@ -77,10 +76,25 @@ export default function Home() {
       {/* BRAND INTRO */}
       <Section>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center">
-          <div className="relative aspect-square overflow-hidden rounded-art">
-            {/* REPLACE with a real studio/process photo when you have one */}
-            <PlaceholderArt palette={['#707A46', '#EFC876', '#F7F1E7', '#332821']} seed={20} />
-          </div>
+          <div className="relative w-full max-w-2xl mx-auto px-2 sm:px-4">
+         {/* Main artwork / interior image */}
+     <div className="w-[82%] ml-auto overflow-hidden rounded-3xl">
+         <img
+          src="https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&w=1400&q=85"
+         alt="Warm earthy interior featuring artwork above a linen sofa"
+         className="w-full aspect-[3/4] object-cover"
+    />
+        </div>
+
+  {/* Floating studio detail image */}
+  <div className="absolute right-0 bottom-[-4%] sm:bottom-[-7%] w-[47%] sm:w-[44%] overflow-hidden rounded-2xl border-4 border-[#F5F2EB] shadow-xl">
+    <img
+      src="https://images.unsplash.com/photo-1544967082-d9d25d867d66?auto=format&fit=crop&w=1000&q=85"
+      alt="Close-up artist studio detail with earthy textures and materials"
+      className="w-full aspect-[4/3] object-cover"
+    />
+  </div>
+</div>
           <div>
             <p className="mb-3 text-sm text-clay font-medium">The brand</p>
             <h2 className="font-display text-3xl sm:text-4xl font-medium leading-tight">

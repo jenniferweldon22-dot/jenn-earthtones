@@ -7,21 +7,75 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Check that Square credentials exist on the server.
+    // Check that Square credentials exist
     if (!process.env.SQUARE_ACCESS_TOKEN) {
-      console.error('Missing SQUARE_ACCESS_TOKEN')
       return res.status(500).json({
-        error: 'Square access token is not configured in Vercel.',
+        error: 'SQUARE_ACCESS_TOKEN is missing in Vercel.',
       })
     }
 
     if (!process.env.SQUARE_LOCATION_ID) {
-      console.error('Missing SQUARE_LOCATION_ID')
       return res.status(500).json({
-        error: 'Square location ID is not configured in Vercel.',
+        error: 'SQUARE_LOCATION_ID is missing in Vercel.',
       })
     }
 
+    const locationId = process.env.SQUARE_LOCATION_ID
+
+    // ---------------------------------------------------------
+    // VERIFY THAT THIS ACCESS TOKEN CAN SEE THIS LOCATION
+    // ---------------------------------------------------------
+    const locationsResponse = await fetch(
+      'https://connect.squareup.com/v2/locations',
+      {
+        method: 'GET',
+        headers: {
+          'Square-Version': '2026-08-19',
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    )
+
+    const locationsData = await locationsResponse.json()
+
+    if (!locationsResponse.ok) {
+      console.error(
+        'Square Locations API error:',
+        JSON.stringify(locationsData, null, 2)
+      )
+
+      return res.status(500).json({
+        error:
+          'Square could not verify your account. Make sure SQUARE_ACCESS_TOKEN is your Production access token.',
+      })
+    }
+
+    const matchingLocation = locationsData.locations?.find(
+      (location) => location.id === locationId
+    )
+
+    if (!matchingLocation) {
+      console.error(
+        'Location ID does not belong to this Square access token.',
+        {
+          requestedLocation: locationId,
+          availableLocations: locationsData.locations?.map((location) => ({
+            id: location.id,
+            name: location.name,
+          })),
+        }
+      )
+
+      return res.status(500).json({
+        error:
+          'The Square access token does not have access to the Location ID configured in Vercel.',
+      })
+    }
+
+    // ---------------------------------------------------------
+    // CHECK CART
+    // ---------------------------------------------------------
     const { items } = req.body
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -30,6 +84,9 @@ export default async function handler(req, res) {
       })
     }
 
+    // ---------------------------------------------------------
+    // BUILD SQUARE LINE ITEMS
+    // ---------------------------------------------------------
     const lineItems = []
 
     for (const item of items) {
@@ -59,6 +116,9 @@ export default async function handler(req, res) {
       })
     }
 
+    // ---------------------------------------------------------
+    // CREATE SQUARE PAYMENT LINK
+    // ---------------------------------------------------------
     const response = await fetch(
       'https://connect.squareup.com/v2/online-checkout/payment-links',
       {
@@ -72,7 +132,7 @@ export default async function handler(req, res) {
           idempotency_key: randomUUID(),
 
           order: {
-            location_id: process.env.SQUARE_LOCATION_ID,
+            location_id: locationId,
             line_items: lineItems,
           },
 
@@ -85,10 +145,11 @@ export default async function handler(req, res) {
 
     const data = await response.json()
 
-    // IMPORTANT:
-    // Show the actual Square error so we can diagnose the problem.
     if (!response.ok) {
-      console.error('Square API error:', JSON.stringify(data, null, 2))
+      console.error(
+        'Square Payment Link error:',
+        JSON.stringify(data, null, 2)
+      )
 
       const squareError =
         data?.errors?.[0]?.detail ||
@@ -104,8 +165,8 @@ export default async function handler(req, res) {
 
     if (!checkoutUrl) {
       console.error(
-        'Square response did not contain a payment link:',
-        data
+        'Square did not return a payment link:',
+        JSON.stringify(data, null, 2)
       )
 
       return res.status(500).json({

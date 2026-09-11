@@ -1,37 +1,41 @@
 import { PRODUCTS } from '../src/data/products.js'
 import { randomUUID } from 'crypto'
 
+const SQUARE_API_URL = 'https://connect.squareup.com'
+const SQUARE_VERSION = '2026-08-19'
+
 export default async function handler(req, res) {
+  // ---------------------------------------------------------
+  // ONLY ALLOW POST REQUESTS
+  // ---------------------------------------------------------
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed.' })
+    return res.status(405).json({
+      error: 'Method not allowed.',
+    })
   }
 
   try {
-    // Check that Square credentials exist
-    if (!process.env.SQUARE_ACCESS_TOKEN) {
+    // ---------------------------------------------------------
+    // CHECK SQUARE ACCESS TOKEN
+    // ---------------------------------------------------------
+    const accessToken = process.env.SQUARE_ACCESS_TOKEN
+
+    if (!accessToken) {
       return res.status(500).json({
         error: 'SQUARE_ACCESS_TOKEN is missing in Vercel.',
       })
     }
 
-    if (!process.env.SQUARE_LOCATION_ID) {
-      return res.status(500).json({
-        error: 'SQUARE_LOCATION_ID is missing in Vercel.',
-      })
-    }
-
-    const locationId = process.env.SQUARE_LOCATION_ID
-
     // ---------------------------------------------------------
-    // VERIFY THAT THIS ACCESS TOKEN CAN SEE THIS LOCATION
+    // GET LOCATIONS AVAILABLE TO THIS SQUARE ACCESS TOKEN
     // ---------------------------------------------------------
     const locationsResponse = await fetch(
-      'https://connect.squareup.com/v2/locations',
+      `${SQUARE_API_URL}/v2/locations`,
       {
         method: 'GET',
         headers: {
-          'Square-Version': '2026-08-19',
-          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          Authorization: `Bearer ${accessToken}`,
+          'Square-Version': SQUARE_VERSION,
           'Content-Type': 'application/json',
         },
       }
@@ -47,31 +51,82 @@ export default async function handler(req, res) {
 
       return res.status(500).json({
         error:
-          'Square could not verify your account. Make sure SQUARE_ACCESS_TOKEN is your Production access token.',
+          locationsData?.errors?.[0]?.detail ||
+          'Square could not access your account.',
       })
     }
 
-    const matchingLocation = locationsData.locations?.find(
-      (location) => location.id === locationId
-    )
+    const locations = locationsData.locations || []
 
-    if (!matchingLocation) {
-      console.error(
-        'Location ID does not belong to this Square access token.',
+    // ---------------------------------------------------------
+    // MAKE SURE SQUARE RETURNED A LOCATION
+    // ---------------------------------------------------------
+    if (locations.length === 0) {
+      console.error('No Square locations available for this access token.')
+
+      return res.status(500).json({
+        error:
+          'No Square locations are available for this access token. Make sure you are using your Production access token.',
+      })
+    }
+
+    // ---------------------------------------------------------
+    // USE THE LOCATION ID FROM VERCEL IF IT EXISTS
+    // OTHERWISE USE THE ONLY AVAILABLE LOCATION
+    // ---------------------------------------------------------
+    const configuredLocationId = process.env.SQUARE_LOCATION_ID
+
+    let location = null
+
+    if (configuredLocationId) {
+      location = locations.find(
+        (item) => item.id === configuredLocationId
+      )
+    }
+
+    // If Vercel's Location ID doesn't match, but Square only
+    // gives this token one location, use that location.
+    if (!location && locations.length === 1) {
+      location = locations[0]
+
+      console.log(
+        'Using the only Square location available to this access token:',
         {
-          requestedLocation: locationId,
-          availableLocations: locationsData.locations?.map((location) => ({
-            id: location.id,
-            name: location.name,
+          id: location.id,
+          name: location.name,
+        }
+      )
+    }
+
+    // ---------------------------------------------------------
+    // STOP IF WE CANNOT SAFELY DETERMINE THE LOCATION
+    // ---------------------------------------------------------
+    if (!location) {
+      console.error(
+        'Configured Square location was not found.',
+        {
+          configuredLocationId,
+          availableLocations: locations.map((item) => ({
+            id: item.id,
+            name: item.name,
+            status: item.status,
           })),
         }
       )
 
       return res.status(500).json({
         error:
-          'The Square access token does not have access to the Location ID configured in Vercel.',
+          'The Square access token does not have access to the configured location. Check that your Production access token and Location ID belong to the same Square account.',
       })
     }
+
+    const locationId = location.id
+
+    console.log('Using Square location:', {
+      id: location.id,
+      name: location.name,
+      status: location.status,
+    })
 
     // ---------------------------------------------------------
     // CHECK CART
@@ -91,7 +146,9 @@ export default async function handler(req, res) {
 
     for (const item of items) {
       const product = PRODUCTS.find(
-        (p) => p.id === item.productId || p.title === item.title
+        (product) =>
+          product.id === item.productId ||
+          product.title === item.title
       )
 
       if (!product) {
@@ -104,11 +161,28 @@ export default async function handler(req, res) {
         (size) => size.label === item.size
       )
 
-      const unitPrice = selectedSize?.price ?? product.price
+      const unitPrice =
+        selectedSize?.price ??
+        product.price ??
+        0
+
+      const quantity = Number(item.quantity)
+
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        return res.status(400).json({
+          error: `Invalid quantity for "${product.title}".`,
+        })
+      }
+
+      if (unitPrice <= 0) {
+        return res.status(400).json({
+          error: `Invalid price for "${product.title}".`,
+        })
+      }
 
       lineItems.push({
-        name: `${product.title} — ${item.size}`,
-        quantity: String(item.quantity),
+        name: `${product.title} — ${item.size || 'Original Artwork'}`,
+        quantity: String(quantity),
         base_price_money: {
           amount: Math.round(unitPrice * 100),
           currency: 'USD',
@@ -119,13 +193,13 @@ export default async function handler(req, res) {
     // ---------------------------------------------------------
     // CREATE SQUARE PAYMENT LINK
     // ---------------------------------------------------------
-    const response = await fetch(
-      'https://connect.squareup.com/v2/online-checkout/payment-links',
+    const paymentLinkResponse = await fetch(
+      `${SQUARE_API_URL}/v2/online-checkout/payment-links`,
       {
         method: 'POST',
         headers: {
-          'Square-Version': '2026-08-19',
-          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          Authorization: `Bearer ${accessToken}`,
+          'Square-Version': SQUARE_VERSION,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -143,30 +217,36 @@ export default async function handler(req, res) {
       }
     )
 
-    const data = await response.json()
+    const paymentLinkData = await paymentLinkResponse.json()
 
-    if (!response.ok) {
+    // ---------------------------------------------------------
+    // HANDLE SQUARE PAYMENT LINK ERRORS
+    // ---------------------------------------------------------
+    if (!paymentLinkResponse.ok) {
       console.error(
         'Square Payment Link error:',
-        JSON.stringify(data, null, 2)
+        JSON.stringify(paymentLinkData, null, 2)
       )
 
       const squareError =
-        data?.errors?.[0]?.detail ||
-        data?.errors?.[0]?.code ||
+        paymentLinkData?.errors?.[0]?.detail ||
+        paymentLinkData?.errors?.[0]?.code ||
         'Square rejected the checkout request.'
 
-      return res.status(response.status).json({
+      return res.status(paymentLinkResponse.status).json({
         error: squareError,
       })
     }
 
-    const checkoutUrl = data?.payment_link?.url
+    // ---------------------------------------------------------
+    // GET CHECKOUT URL
+    // ---------------------------------------------------------
+    const checkoutUrl = paymentLinkData?.payment_link?.url
 
     if (!checkoutUrl) {
       console.error(
-        'Square did not return a payment link:',
-        JSON.stringify(data, null, 2)
+        'Square did not return a checkout URL:',
+        JSON.stringify(paymentLinkData, null, 2)
       )
 
       return res.status(500).json({
@@ -174,14 +254,19 @@ export default async function handler(req, res) {
       })
     }
 
+    // ---------------------------------------------------------
+    // SEND CHECKOUT URL BACK TO WEBSITE
+    // ---------------------------------------------------------
     return res.status(200).json({
       url: checkoutUrl,
     })
   } catch (error) {
-    console.error('Checkout error:', error)
+    console.error('Square checkout error:', error)
 
     return res.status(500).json({
-      error: 'Could not connect to Square.',
+      error:
+        error?.message ||
+        'Could not connect to Square.',
     })
   }
 }

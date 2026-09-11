@@ -1,4 +1,5 @@
 import { PRODUCTS } from '../src/data/products.js'
+import { randomUUID } from 'crypto'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -6,10 +7,27 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Check that Square credentials exist on the server.
+    if (!process.env.SQUARE_ACCESS_TOKEN) {
+      console.error('Missing SQUARE_ACCESS_TOKEN')
+      return res.status(500).json({
+        error: 'Square access token is not configured in Vercel.',
+      })
+    }
+
+    if (!process.env.SQUARE_LOCATION_ID) {
+      console.error('Missing SQUARE_LOCATION_ID')
+      return res.status(500).json({
+        error: 'Square location ID is not configured in Vercel.',
+      })
+    }
+
     const { items } = req.body
 
     if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'Your cart is empty.' })
+      return res.status(400).json({
+        error: 'Your cart is empty.',
+      })
     }
 
     const lineItems = []
@@ -51,11 +69,13 @@ export default async function handler(req, res) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          idempotency_key: crypto.randomUUID(),
+          idempotency_key: randomUUID(),
+
           order: {
             location_id: process.env.SQUARE_LOCATION_ID,
             line_items: lineItems,
           },
+
           checkout_options: {
             ask_for_shipping_address: true,
           },
@@ -65,21 +85,42 @@ export default async function handler(req, res) {
 
     const data = await response.json()
 
+    // IMPORTANT:
+    // Show the actual Square error so we can diagnose the problem.
     if (!response.ok) {
-      console.error('Square API error:', data)
+      console.error('Square API error:', JSON.stringify(data, null, 2))
+
+      const squareError =
+        data?.errors?.[0]?.detail ||
+        data?.errors?.[0]?.code ||
+        'Square rejected the checkout request.'
+
+      return res.status(response.status).json({
+        error: squareError,
+      })
+    }
+
+    const checkoutUrl = data?.payment_link?.url
+
+    if (!checkoutUrl) {
+      console.error(
+        'Square response did not contain a payment link:',
+        data
+      )
+
       return res.status(500).json({
-        error: 'Square could not create the checkout.',
+        error: 'Square did not return a checkout URL.',
       })
     }
 
     return res.status(200).json({
-      url: data.payment_link.url,
+      url: checkoutUrl,
     })
   } catch (error) {
     console.error('Checkout error:', error)
 
     return res.status(500).json({
-      error: 'Could not create checkout.',
+      error: 'Could not connect to Square.',
     })
   }
 }

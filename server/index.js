@@ -4,12 +4,17 @@
  * This server creates a secure Square-hosted checkout link.
  * The Square access token stays on the server and is never exposed
  * to the React frontend.
+ *
+ * SECURITY: prices are looked up server-side from products.js — never
+ * trusted from the request body — so a tampered client request can't
+ * change what gets charged.
  */
 
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import { randomUUID } from 'crypto'
+import { PRODUCTS } from '../src/data/products.js'
 
 const app = express()
 
@@ -55,15 +60,52 @@ app.post('/api/create-square-checkout', async (req, res) => {
 
     /**
      * Convert the shopping cart into Square order line items.
+     * Price and product identity are looked up server-side from
+     * PRODUCTS — the client only tells us WHICH product/size/quantity,
+     * never the price to charge.
      */
-    const lineItems = items.map((item) => ({
-      name: `${item.title} — ${item.size || 'Original Artwork'}`,
-      quantity: String(item.quantity),
-      base_price_money: {
-        amount: Math.round(Number(item.unitPrice) * 100),
-        currency: 'USD',
-      },
-    }))
+    const lineItems = []
+
+    for (const item of items) {
+      const product = PRODUCTS.find(
+        (p) => p.id === item.productId || p.title === item.title
+      )
+
+      if (!product) {
+        return res.status(400).json({
+          error: `Product "${item.title}" could not be found.`,
+        })
+      }
+
+      const selectedSize = product.sizes?.find(
+        (size) => size.label === item.size
+      )
+
+      const unitPrice = selectedSize?.price ?? product.price ?? 0
+
+      const quantity = Number(item.quantity)
+
+      if (!Number.isInteger(quantity) || quantity < 1) {
+        return res.status(400).json({
+          error: `Invalid quantity for "${product.title}".`,
+        })
+      }
+
+      if (unitPrice <= 0) {
+        return res.status(400).json({
+          error: `Invalid price for "${product.title}".`,
+        })
+      }
+
+      lineItems.push({
+        name: `${product.title} — ${item.size || 'Original Artwork'}`,
+        quantity: String(quantity),
+        base_price_money: {
+          amount: Math.round(unitPrice * 100),
+          currency: 'USD',
+        },
+      })
+    }
 
     /**
      * Ask Square to create a hosted checkout page.
